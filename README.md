@@ -10,6 +10,12 @@ You can optionally connect a second **pose_reference_image** as a purely structu
 
 FLUX.2 support (`ReferenceLatent`, `EmptyFlux2LatentImage`, `FluxKVCache`, etc.) ships in ComfyUI core — nothing extra to install for the generation pipeline itself.
 
+**Install via [ComfyUI Manager](https://github.com/ltdrdata/ComfyUI-Manager) if you can** — it installs each package's Python dependencies automatically. If you install any of these by hand (`git clone` into `custom_nodes`), that step does NOT happen on its own; you also have to run its `requirements.txt` yourself, or it'll fail to import at startup with something like `ModuleNotFoundError: No module named 'piexif'` (a real, common one from ComfyUI-Impact-Pack specifically) and every node it provides (e.g. `FaceDetailer`) will show up as "not registered" the first time you try to use it. To fix that after a manual clone:
+```
+<path to ComfyUI>\python_embeded\python.exe -m pip install -r <path to the node's folder>\requirements.txt
+```
+then restart ComfyUI and check its startup log for a clean `### Loading: <package name>` line with no `[ERROR]` underneath.
+
 - **[ComfyUI-RMBG](https://github.com/1038lab/ComfyUI-RMBG)** — required for the white-background cleanup run on every pose. The RMBG-2.0 model it uses auto-downloads on first use.
 - **[ComfyUI-Impact-Pack](https://github.com/ltdrdata/ComfyUI-Impact-Pack)** + **[ComfyUI-Impact-Subpack](https://github.com/ltdrdata/ComfyUI-Impact-Subpack)** — only required if you enable the node's **Face Detail** pass (off by default).
 - **[Muse Model Loader](https://github.com/muse-collective-26/muse-model-loader)** — This is an optional node that is in the workflow.
