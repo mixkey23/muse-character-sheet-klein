@@ -61,6 +61,46 @@ TARGET_SIZE = {
 ALIGN_BODY_KW = dict(width=704, height=2304, figure_height=2048, bottom_margin=128, threshold=0.1)
 PORTRAIT_FINAL_SIZE = (1280, 2304)  # (width, height)
 
+# [2026-09-17] pose_reference_image crop rects - identical to the Krea2
+# sibling node's own GUIDE_CROPS (same mannequin template layout, verified
+# against Codex's original manual "KREA 2 Character Sheet - Pose Guides"
+# workflow, byte-identical numbers). Added because the previous approach -
+# feeding the WHOLE 5-panel sheet as one reference, unchanged, for all 5
+# generations - relied entirely on the model's own vision-grounding to
+# figure out which figure in the busy multi-pose sheet the text prompt's
+# pose description meant, with no explicit pointer to the right region. That
+# is a real ask, not a guarantee. Cropping to just the ONE relevant panel per
+# generation removes the ambiguity outright: if only one pose is visible,
+# there's nothing else for the grounding to mistakenly latch onto (Andy:
+# "if it only could see a specific angle, then that is the grounding and it
+# should react to that").
+REFERENCE_GUIDE_SIZE = (1670, 942)  # (width, height)
+GUIDE_CROPS = {
+    "01_portrait":      dict(x=0,    y=0, width=508, height=942),
+    "02_front":         dict(x=508,  y=0, width=307, height=942),
+    "04_right_profile": dict(x=815,  y=0, width=237, height=942),
+    "03_left_profile":  dict(x=1052, y=0, width=267, height=942),
+    "05_back":          dict(x=1319, y=0, width=351, height=942),
+}
+# Same proven proportions as the Krea2 node's own ALIGN_GUIDE_KW - normalizes
+# each crop's figure height/placement before it's encoded, independent of
+# TARGET_SIZE (ReferenceLatent doesn't require matching the target's shape).
+ALIGN_POSE_REF_KW = dict(width=544, height=1784, figure_height=1584, bottom_margin=100, threshold=0.1)
+
+# [2026-09-17] Named presets showing the actual final pixel size, not a bare
+# scale multiplier - "1.3x" tells you nothing about what you'll get, and
+# there's no way to reverse-engineer a target size from it without doing the
+# maths yourself (Andy: "who's supposed to know that's the default size").
+# Every panel's proportions stay identical across presets (see
+# _assemble_final) - the character sheet is still a fixed, exact size, you're
+# just picking which fixed size.
+OUTPUT_SIZE_PRESETS = {
+    "4096x2304 (Standard - default)": 1.0,
+    "3072x1728 (Medium)": 0.75,
+    "2048x1152 (Small)": 0.5,
+    "1536x864 (Extra Small)": 0.375,
+}
+
 # [2026-09-19] FLUX.2 doesn't support negative prompts at all (BFL's own
 # prompting guide: "No negative prompts: FLUX.2 does not support negative
 # prompts. Focus on describing what you want, not what you don't want.") -
@@ -123,28 +163,28 @@ FACE_DETAIL_DETECTOR_MODELS = {
 }
 FACE_DETAIL_STEPS = 4
 # [2026-09-20] bbox_threshold 0.50 -> 0.75 and drop_size 10 -> 40 after a
-# real malfunction: on one FLUX.2 [klein] generation, the face detector
+# first malfunction: on one FLUX.2 [klein] generation, the face detector
 # returned 300 "faces" in a single 640x224 image (a real face there fills a
 # large fraction of the frame, per the SAME run's portrait-pose detection:
-# "640x384 1 face"). FaceDetailer has no built-in cap on how many detected
-# regions it refines - it ran a full encode/sample/decode pass for every one
-# of those 300, which is what an "is this run going mad? we're on 76 now"
-# report was actually seeing. 300 detections at drop_size=10 in a 224px-wide
-# image are overwhelmingly tiny noise-level fragments, not real faces -
-# raising both filters rejects that class of false-positive storm at the
-# source rather than just tolerating it. (The Krea2 sibling node's
-# character_sheet_director.py has this identical dict/vulnerability and
-# hasn't hit this yet, but carries the same risk - worth the same fix if it
-# ever does.)
-FACE_DETAIL_FIXED_KW = dict(
-    guide_size=1536.0, guide_size_for=False, max_size=1536.0,
-    feather=10, noise_mask=True, force_inpaint=True,
-    bbox_threshold=0.75, bbox_dilation=10, bbox_crop_factor=2.0,
-    sam_detection_hint="center-1", sam_dilation=0, sam_threshold=0.93,
-    sam_bbox_expansion=0, sam_mask_hint_threshold=0.70, sam_mask_hint_use_negative="False",
-    drop_size=40, wildcard="", cycle=1,
-    inpaint_model=False, noise_mask_feather=10, tiled_encode=False, tiled_decode=False,
-)
+# "640x384 1 face").
+# [2026-09-17] That threshold tightening reduced false positives on most
+# poses but did NOT hold on every image - confirmed live, the exact same
+# 300-detection storm recurred on a different pose after the fix. The real
+# problem was architectural: FaceDetailer has no built-in cap on how many
+# detected regions it refines, full stop - it dutifully ran a full
+# encode/sample/decode pass for every single one, which is what an "is this
+# run going mad? we're on 76/96 now" report was actually seeing both times.
+# Threshold tuning can only ever lower the ODDS of a false-positive storm,
+# never guarantee it can't happen again on some other image. Rebuilt on
+# Impact Pack's SEGS pipeline instead (see _face_detail): detect -> keep
+# ONLY the single largest region -> refine just that one. There's only ever
+# one real face in these poses, so this is a hard structural cap, not
+# another number to tune and hope. (The Krea2 sibling node's
+# character_sheet_director.py had the same FaceDetailer-based vulnerability -
+# ported the same SEGS rebuild there too.)
+FACE_DETAIL_BBOX_KW = dict(threshold=0.75, dilation=10, crop_factor=2.0, drop_size=40, labels="all")
+FACE_DETAIL_DETAILER_KW = dict(guide_size=1536.0, guide_size_for=False, max_size=1536.0, noise_mask_feather=10)
+FACE_DETAIL_PASTE_KW = dict(feather=10, alpha=255)
 
 _MODEL_CACHE = {"key": None}
 _DETECTOR_CACHE = {"key": None}
@@ -259,24 +299,63 @@ def _resize(image, width, height, method="lanczos"):
     return samples.movedim(1, -1)
 
 
+def _scaled_crop(pose_name, guide_image):
+    """Identical mechanism to the Krea2 sibling node's own _scaled_crop -
+    scales GUIDE_CROPS' rectangles (tuned to REFERENCE_GUIDE_SIZE) to whatever
+    actual resolution the supplied pose_reference_image happens to be."""
+    ref_w, ref_h = REFERENCE_GUIDE_SIZE
+    actual_h, actual_w = guide_image.shape[1], guide_image.shape[2]
+    sx, sy = actual_w / ref_w, actual_h / ref_h
+    rect = GUIDE_CROPS[pose_name]
+    x = int(round(rect["x"] * sx))
+    y = int(round(rect["y"] * sy))
+    w = int(round(rect["width"] * sx))
+    h = int(round(rect["height"] * sy))
+    x = max(0, min(x, actual_w - 1))
+    y = max(0, min(y, actual_h - 1))
+    w = max(1, min(w, actual_w - x))
+    h = max(1, min(h, actual_h - y))
+    return x, y, w, h
+
+
+def _crop(image, x, y, w, h):
+    return image[:, y:y + h, x:x + w, :]
+
+
 def _face_detail(image, model, positive, negative, models, seed, cfg,
                   face_detail_type, face_detail_sampler, face_detail_scheduler, face_detail_denoise):
+    """[2026-09-17] SEGS pipeline, not a direct FaceDetailer call - see the
+    FACE_DETAIL_* constants' comment for why. detect (BboxDetectorSEGS) ->
+    keep only the single largest region (ImpactSEGSOrderedFilter,
+    take_count=1) -> refine just that one (SEGSDetailer) -> composite back
+    onto the full image (SEGSPaste). However many "faces" the detector
+    reports - 1 or 300 - exactly one refine pass ever runs."""
     detector = _get_detector(face_detail_type)
     print(f"[MuseCharacterSheetKlein] >>> face-detail pass START (detect={face_detail_type}, "
           f"sampler={face_detail_sampler}, scheduler={face_detail_scheduler}, "
           f"denoise={face_detail_denoise}, steps={FACE_DETAIL_STEPS})", flush=True)
-    result = _node("FaceDetailer").doit(
-        image=image, model=model, clip=models["clip"], vae=models["vae"],
-        seed=int(seed), steps=FACE_DETAIL_STEPS, cfg=float(cfg), sampler_name=face_detail_sampler,
-        scheduler=face_detail_scheduler, positive=positive, negative=negative,
-        denoise=float(face_detail_denoise), bbox_detector=detector["bbox_detector"],
-        **FACE_DETAIL_FIXED_KW,
+    raw_segs = _node("BboxDetectorSEGS").doit(
+        bbox_detector=detector["bbox_detector"], image=image, **FACE_DETAIL_BBOX_KW,
+    )[0]
+    largest_seg, _ = _node("ImpactSEGSOrderedFilter").doit(
+        segs=raw_segs, target="area(=w*h)", order=True, take_start=0, take_count=1,
     )
-    mask = result[3]
-    found = bool(mask is not None and mask.numel() > 0 and mask.any())
-    print(f"[MuseCharacterSheetKlein] <<< face-detail pass END - "
-          f"{'region found and refined' if found else 'NO region detected, image unchanged'}", flush=True)
-    return result[0]
+    found = len(largest_seg[1]) > 0
+    if not found:
+        print("[MuseCharacterSheetKlein] <<< face-detail pass END - NO region detected, image unchanged", flush=True)
+        return image
+    basic_pipe = _node("ToBasicPipe").doit(
+        model=model, clip=models["clip"], vae=models["vae"], positive=positive, negative=negative,
+    )[0]
+    refined_segs, _ = _node("SEGSDetailer").doit(
+        image=image, segs=largest_seg, seed=int(seed), steps=FACE_DETAIL_STEPS, cfg=float(cfg),
+        sampler_name=face_detail_sampler, scheduler=face_detail_scheduler, denoise=float(face_detail_denoise),
+        noise_mask=True, force_inpaint=True, basic_pipe=basic_pipe, refiner_ratio=0.2, batch_size=1, cycle=1,
+        **FACE_DETAIL_DETAILER_KW,
+    )
+    result_image = _node("SEGSPaste").doit(image=image, segs=refined_segs, **FACE_DETAIL_PASTE_KW)[0]
+    print("[MuseCharacterSheetKlein] <<< face-detail pass END - region found and refined", flush=True)
+    return result_image
 
 
 def _generate_pose(pose_idx, character_image, char_latent, pose_latent, models, seed, prompt,
@@ -404,14 +483,27 @@ def _restore_confirmed_preview(state, index, seed, prompt):
     return {"seed": seed, "prompt": prompt, "image": pixels, "mask": mask}
 
 
-def _assemble_final(sess):
+def _assemble_final(sess, output_scale=1.0):
+    """[2026-09-17] output_scale (default 1.0 = the original 4096x2304)
+    uniformly scales every panel's dimensions - portrait width/height and the
+    body panels' width/height/figure_height/bottom_margin all move together,
+    so proportions stay identical to the tuned defaults; only the overall
+    size changes. Requested via a YouTube comment asking for a configurable
+    final resolution."""
+    scale = float(output_scale)
+    portrait_size = (round(PORTRAIT_FINAL_SIZE[0] * scale), round(PORTRAIT_FINAL_SIZE[1] * scale))
+    align_kw = {**ALIGN_BODY_KW,
+                "width": round(ALIGN_BODY_KW["width"] * scale),
+                "height": round(ALIGN_BODY_KW["height"] * scale),
+                "figure_height": round(ALIGN_BODY_KW["figure_height"] * scale),
+                "bottom_margin": round(ALIGN_BODY_KW["bottom_margin"] * scale)}
     panels = []
     for i in range(5):
         pose = sess["poses"][i]
         if i == 0:
-            panel = _resize(pose["image"], *PORTRAIT_FINAL_SIZE)
+            panel = _resize(pose["image"], *portrait_size)
         else:
-            panel = _node("MuseSheetAlignFigure").align(image=pose["image"], mask=pose["mask"], **ALIGN_BODY_KW)[0]
+            panel = _node("MuseSheetAlignFigure").align(image=pose["image"], mask=pose["mask"], **align_kw)[0]
         panels.append(panel)
     return torch.cat(panels, dim=2)
 
@@ -444,12 +536,21 @@ class MuseCharacterSheetKlein:
                 "face_detail_denoise": ("FLOAT", {"default": 0.30, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "seed_mode": (["random", "fixed"], {"default": "random", "tooltip": "What starting seeds a fresh run gets AFTER a completed sheet resets (not the per-pose New seed button, which always picks a fresh random seed regardless). 'random' means running again with the same character photo produces different poses without needing a new image; 'fixed' always starts from the same seeds (41001-41005), so a re-run reproduces the same result."}),
                 "state_json": ("STRING", {"multiline": True, "default": json.dumps(DEFAULT_STATE)}),
+                # [2026-09-17] Appended AFTER state_json deliberately, never
+                # inserted mid-list - widgets_values on an already-saved
+                # workflow is positional, not by-name, so a mid-list insert
+                # silently shifts every later widget's stored value onto the
+                # wrong slot (this is exactly what just happened: an old
+                # saved node's state_json value landed in this widget instead,
+                # which then cascaded and scrambled unet_name/clip_name too).
+                # New widgets always go at the true end from now on.
+                "output_size": (list(OUTPUT_SIZE_PRESETS.keys()), {"default": "4096x2304 (Standard - default)", "tooltip": "Final assembled sheet size - pick the exact pixel dimensions you want. Every panel's proportions stay identical across presets, only the overall size changes. Only affects the final Build step, not the per-pose generation/preview resolution."}),
             },
             # Same purely-additive override pattern as the Krea2 node - manual
             # unet_name/clip_name/vae_name widgets still work standalone; a
             # connected socket wins over its matching widget (see _get_models()).
             "optional": {
-                "pose_reference_image": ("IMAGE", {"tooltip": "Optional second reference, used purely as a structural pose anchor (chained in as an extra ReferenceLatent, never mentioned in the prompt text). Confirmed to help hold a pose without needing to describe it."}),
+                "pose_reference_image": ("IMAGE", {"tooltip": "Optional second reference - a 5-panel mannequin pose guide sheet, same layout as the Krea2 sibling node's guide_image. Automatically cropped to the ONE matching panel per pose (never the whole sheet) and chained in as an extra ReferenceLatent, purely as a structural pose anchor - never mentioned in the prompt text. Confirmed to help hold a pose without needing to describe it."}),
                 "model_override": ("MODEL", {"tooltip": "Optional. Overrides unet_name when connected."}),
                 "clip_override": ("CLIP", {"tooltip": "Optional. Overrides clip_name when connected."}),
                 "vae_override": ("VAE", {"tooltip": "Optional. Overrides vae_name when connected."}),
@@ -473,7 +574,7 @@ class MuseCharacterSheetKlein:
 
     def run(self, character_image, unet_name, clip_name, vae_name, kv_cache, steps, cfg,
             face_detail, face_detail_type, face_detail_sampler, face_detail_scheduler, face_detail_denoise,
-            seed_mode, state_json, unique_id, pose_reference_image=None, model_override=None, clip_override=None, vae_override=None):
+            seed_mode, output_size, state_json, unique_id, pose_reference_image=None, model_override=None, clip_override=None, vae_override=None):
         character_image = _ensure_rgb(character_image)
         if pose_reference_image is not None:
             pose_reference_image = _ensure_rgb(pose_reference_image)
@@ -512,14 +613,24 @@ class MuseCharacterSheetKlein:
             )[0]
             sess["char_latent"] = _node("VAEEncode").encode(vae=models["vae"], pixels=scaled_char)[0]
 
-        if "pose_latent" not in sess:
+        if "pose_latents" not in sess:
+            # [2026-09-17] One cropped+encoded latent PER POSE now, not one
+            # whole-sheet latent reused for all 5 - see GUIDE_CROPS' comment
+            # for why. Computed once per session (same caching pattern as
+            # char_latent), since pose_reference_image doesn't change
+            # between actions within a session.
             if pose_reference_image is not None:
-                scaled_pose = _node("ImageScaleToTotalPixels").execute(
-                    image=pose_reference_image, upscale_method="lanczos", megapixels=1.0, resolution_steps=1,
-                )[0]
-                sess["pose_latent"] = _node("VAEEncode").encode(vae=models["vae"], pixels=scaled_pose)[0]
+                sess["pose_latents"] = {}
+                for idx, pose_name in enumerate(POSE_NAMES):
+                    x, y, w, h = _scaled_crop(pose_name, pose_reference_image)
+                    pose_crop = _crop(pose_reference_image, x, y, w, h)
+                    if idx == 0:
+                        pose_for_gen = pose_crop
+                    else:
+                        pose_for_gen = _node("MuseSheetAlignFigure").align(image=pose_crop, mask=None, **ALIGN_POSE_REF_KW)[0]
+                    sess["pose_latents"][idx] = _node("VAEEncode").encode(vae=models["vae"], pixels=pose_for_gen)[0]
             else:
-                sess["pose_latent"] = None
+                sess["pose_latents"] = {idx: None for idx in range(5)}
 
         if action and action.get("type") == "reroll":
             i = int(action["pose"])
@@ -651,6 +762,30 @@ class MuseCharacterSheetKlein:
                 # to a normal base reroll rather than doing nothing at all.
                 if not confirmed[i]:
                     seeds[i] = int(action["seed"])
+        elif action and action.get("type") == "reset_edit":
+            # [2026-09-17] Cancels an active edit and reverts to the plain
+            # base pose - requested via a YouTube comment (edit an outfit,
+            # decide you don't want it, but there was no way back to the
+            # un-edited version short of retyping the base prompt). Just
+            # dropping the cached pose is enough: seed/prompt haven't
+            # changed, so to_generate's mismatch check won't catch it on its
+            # own, but with no cached entry at all it unconditionally
+            # regenerates at the CURRENT seed/prompt - a plain base
+            # generation, since sess["poses"][i] never had edit_instruction/
+            # edit_source_image keys to begin with once rebuilt this way.
+            i = int(action["pose"])
+            if not confirmed[i]:
+                sess["poses"].pop(i, None)
+        elif action and action.get("type") == "reset_prompt":
+            # [2026-09-17] "Reset prompt to default" - Andy: "even if you
+            # change it and mess it all up, you can hit default prompt and
+            # it will do that." Reverts this pose's prompt back to its
+            # built-in POSE_PROMPTS text and lets it regenerate with it -
+            # the normal to_generate mismatch check (prompt changed) picks
+            # this up on its own, no special regeneration path needed.
+            i = int(action["pose"])
+            if not confirmed[i]:
+                prompts[i] = DEFAULT_PROMPTS[i]
         elif not action and seed_mode == "random":
             # [2026-09-23] A bare "hit Run" (no button clicked - action is
             # None) used to just replay whatever was already cached, since
@@ -676,7 +811,7 @@ class MuseCharacterSheetKlein:
                        )]
         for i in to_generate:
             print(f"[MuseCharacterSheetKlein] generating {POSE_NAMES[i]} (seed={seeds[i]})", flush=True)
-            image, mask = _generate_pose(i, character_image, sess["char_latent"], sess["pose_latent"], models,
+            image, mask = _generate_pose(i, character_image, sess["char_latent"], sess["pose_latents"][i], models,
                                           seeds[i], prompts[i], steps, cfg,
                                           face_detail, face_detail_type, face_detail_sampler,
                                           face_detail_scheduler, face_detail_denoise)
@@ -690,7 +825,7 @@ class MuseCharacterSheetKlein:
                 status = "not_all_confirmed"
             else:
                 print("[MuseCharacterSheetKlein] assembling final sheet", flush=True)
-                final_image = _assemble_final(sess)
+                final_image = _assemble_final(sess, OUTPUT_SIZE_PRESETS.get(output_size, 1.0))
                 status = "finalized"
         else:
             status = "generating" if to_generate else "ready"

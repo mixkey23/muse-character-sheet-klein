@@ -334,8 +334,19 @@ function buildCharacterSheetUI(node, stateWidget, faceWidgets) {
     applyBtn.textContent = "Apply prompt (same seed)";
     applyBtn.style.cssText =
       "padding:4px 2px;border-radius:4px;border:1px solid #3f3f46;background:#27272a;color:#e4e4e7;cursor:pointer;font-size:11px;";
+    // [2026-09-17] Andy: "even if you change it and mess it all up, you can
+    // hit default prompt and it will do that." Reverts THIS pose's prompt to
+    // its built-in default and regenerates with it - not just a text-field
+    // undo, since the default text only genuinely lives server-side
+    // (DEFAULT_PROMPTS/POSE_PROMPTS in the Python) and duplicating it here
+    // would risk drifting out of sync if that text is ever edited.
+    const resetPromptBtn = document.createElement("button");
+    resetPromptBtn.textContent = "↺ Reset prompt to default";
+    resetPromptBtn.style.cssText =
+      "padding:4px 2px;border-radius:4px;border:1px solid #52525b;background:#18181b;color:#a1a1aa;cursor:pointer;font-size:11px;";
     promptWrap.appendChild(promptArea);
     promptWrap.appendChild(applyBtn);
+    promptWrap.appendChild(resetPromptBtn);
     card.appendChild(promptWrap);
 
     // [2026-09-20] Klein is an edit model - this re-edits the pose's OWN
@@ -356,15 +367,26 @@ function buildCharacterSheetUI(node, stateWidget, faceWidgets) {
     editBtn.style.cssText =
       "min-height:28px;padding:4px 2px;border-radius:4px;border:1px solid #a78bfa;background:#4c1d95;" +
       "color:#ede9fe;cursor:pointer;font-size:11px;";
+    // [2026-09-17] Only shown once this pose actually has an active edit
+    // (see refreshConfirmedVisual) - requested via a YouTube comment: New
+    // seed re-rolls an active edit rather than reverting it (by design, see
+    // reroll_edit), but there was no way back to the plain un-edited pose
+    // short of retyping the base prompt into Apply Prompt.
+    const resetEditBtn = document.createElement("button");
+    resetEditBtn.textContent = "↺ Reset edit";
+    resetEditBtn.style.cssText =
+      "display:none;min-height:26px;padding:4px 2px;border-radius:4px;border:1px solid #71717a;background:#27272a;" +
+      "color:#d4d4d8;cursor:pointer;font-size:11px;";
     editWrap.appendChild(editInput);
     editWrap.appendChild(editBtn);
+    editWrap.appendChild(resetEditBtn);
     card.appendChild(editWrap);
 
     grid.appendChild(card);
     panels.push({
       card, img, placeholder, seedLabel, confirmBtn, rerollBtn,
-      promptToggle, promptWrap, promptArea, applyBtn,
-      editInput, editBtn,
+      promptToggle, promptWrap, promptArea, applyBtn, resetPromptBtn,
+      editInput, editBtn, resetEditBtn,
     });
   }
 
@@ -447,6 +469,8 @@ function buildCharacterSheetUI(node, stateWidget, faceWidgets) {
       : hasActiveEdit
       ? "Try the same edit again with a different seed"
       : "Generate a new seed";
+    p.resetEditBtn.style.display = hasActiveEdit && !isConfirmed ? "block" : "none";
+    p.resetEditBtn.disabled = isConfirmed;
     if (isConfirmed) {
       p.card.style.borderColor = "#22c55e";
       p.confirmBtn.textContent = "✓ Unconfirm";
@@ -480,10 +504,30 @@ function buildCharacterSheetUI(node, stateWidget, faceWidgets) {
       // seed goes back to a normal base regeneration, not a reroll of an
       // edit instruction that no longer applies to the new description.
       state.editInstructions[i] = null;
-      state.action = null;
+      // [2026-09-17] Explicit action type, NOT null - a null action is read
+      // server-side as "bare Queue Prompt", which under seed_mode=random
+      // rerolls every unconfirmed pose's seed and regenerates all 5 (that's
+      // the intended behavior for an actual bare run - see seed_mode's own
+      // history). Apply Prompt is a targeted single-pose edit, not a bare
+      // run, so it needs its own action type to stay out of that branch -
+      // a YouTube comment caught this: editing just the portrait prompt was
+      // regenerating all 5 poses.
+      state.action = { type: "apply_prompt", pose: i };
       setState(stateWidget, state);
       refreshConfirmedVisual(i, false);
       statusEl.textContent = `Applying edited prompt to ${POSE_LABELS[i]}…`;
+      queue();
+    };
+
+    p.resetPromptBtn.onclick = () => {
+      const state = getState(stateWidget);
+      if (state.confirmed[i]) return;
+      state.confirmed[i] = false;
+      state.editInstructions[i] = null;
+      state.action = { type: "reset_prompt", pose: i };
+      setState(stateWidget, state);
+      refreshConfirmedVisual(i, false);
+      statusEl.textContent = `Resetting ${POSE_LABELS[i]} to its default prompt…`;
       queue();
     };
 
@@ -542,6 +586,17 @@ function buildCharacterSheetUI(node, stateWidget, faceWidgets) {
       setState(stateWidget, state);
       refreshConfirmedVisual(i, false);
       statusEl.textContent = `Editing ${POSE_LABELS[i]}…`;
+      queue();
+    };
+
+    p.resetEditBtn.onclick = () => {
+      const state = getState(stateWidget);
+      if (state.confirmed[i] || !state.editInstructions[i]) return;
+      state.editInstructions[i] = null;
+      state.action = { type: "reset_edit", pose: i };
+      setState(stateWidget, state);
+      refreshConfirmedVisual(i, false);
+      statusEl.textContent = `Reverting ${POSE_LABELS[i]} to the original…`;
       queue();
     };
   });
