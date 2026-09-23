@@ -6,6 +6,22 @@ Instead of wiring up five separate Klein generations by hand, the node runs all 
 
 You can optionally connect a second **pose_reference_image** as a purely structural pose anchor — it's never mentioned in the prompt text, just chained in as an extra reference to help hold a pose.
 
+### Universal Pose Guide (figure-agnostic)
+
+Pose language is defined by **camera relationship**, not anatomy (`VIEW_DEFINITIONS` in `character_sheet_klein.py`) — "front" means the camera facing the subject's front, "back" means directly opposite, regardless of whether the subject is a human, a quadruped, a floating creature or a robot. `assets/universal_pose_guide.png` is a genderless, skinless, clothingless capsule-rig mannequin (5 panels, one per view) you can wire into `pose_reference_image` as a species-neutral pose anchor instead of a human-shaped guide.
+
+Panel geometry (fixed, do not resize per-figure-type — build any new guide template to this same layout):
+
+| View | x | width | height |
+|---|---|---|---|
+| `01_portrait` | 0 | 508 | 942 |
+| `02_front` | 508 | 307 | 942 |
+| `04_right_profile` | 815 | 237 | 942 |
+| `03_left_profile` | 1052 | 267 | 942 |
+| `05_back` | 1319 | 351 | 942 |
+
+Total sheet: 1670×942 (`REFERENCE_GUIDE_SIZE`). Any pose-guide image is auto-scaled to this reference before cropping (`_scaled_crop`), so a template built at a different resolution still works as long as it keeps these proportions.
+
 ## ⚠️ Required custom nodes — install these BEFORE you run anything
 
 FLUX.2 support (`ReferenceLatent`, `EmptyFlux2LatentImage`, `FluxKVCache`, etc.) ships in ComfyUI core — nothing extra to install for the generation pipeline itself.

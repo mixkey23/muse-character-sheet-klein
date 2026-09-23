@@ -109,39 +109,52 @@ OUTPUT_SIZE_PRESETS = {
 # zeroed-out convention (ConditioningZeroOut), a structural requirement of the
 # ReferenceLatent/KSampler wiring, not a place to put steering text.
 
+# [2026-09-23] FS-005: canonical view vocabulary, defined purely by CAMERA
+# RELATIONSHIP to the subject - never by anatomy. This is what lets FS-004
+# strip human-specific language ("arms relaxed by their sides", "shoulders
+# square") out of POSE_PROMPTS without losing what each view actually means:
+# a quadruped, a floating creature or a robot all have a "front" (the camera
+# facing whatever the subject treats as its front) and a "back" (directly
+# opposite), even though neither has "shoulders" or "arms". `crop` is only
+# set for the one view that isn't a full-body framing.
+VIEW_DEFINITIONS = {
+    "01_portrait": {
+        "camera": "facing the subject's identifying front end",
+        "crop": "close-up, cropped tightly to the subject's identifying front end only",
+    },
+    "02_front": {"camera": "facing the subject's front", "crop": None},
+    "03_left_profile": {"camera": "at the subject's left side, 90 degrees from the front", "crop": None},
+    "04_right_profile": {"camera": "at the subject's right side, 90 degrees from the front", "crop": None},
+    "05_back": {"camera": "directly behind the subject, opposite the front", "crop": None},
+}
+
+# [2026-09-23] FS-004: rebuilt from VIEW_DEFINITIONS - "the subject in image
+# 1" (not "the person") anchors identity to the one reference without
+# assuming a body plan; "natural resting pose" replaces "arms relaxed by
+# their sides" (a biped-only description); "full body" / "entire body" reads
+# fine for a quadruped, a floating figure or a robot without singling out
+# limbs, faces or hair. Proven-in-testing framing (plain white background,
+# full body head-to-toe/end-to-end, unchanged appearance) is unchanged -
+# only the anatomy-specific wording is gone.
 # [2026-09-19] Single-reference, text-described poses - proven in real testing
-# against this exact workflow (Flux Klein 1 Image Ref.json). "The person in
-# image 1" anchors identity/outfit to the one reference; everything else is a
+# against this exact workflow (Flux Klein 1 Image Ref.json). Everything is a
 # concrete, generic pose description with no image-specific detail, so the
 # same prompt works for any character photo dropped in - see Andy's explicit
 # requirement that this NOT be hardcoded to one specific photo's content.
-POSE_PROMPTS = {
-    "01_portrait": (
-        "The person in image 1, close-up portrait cropped to head and shoulders only, "
-        "facing straight to camera, shoulders square and level, on a plain white "
-        "background. Same face, hairstyle, skin tone and outfit unchanged."
-    ),
-    "02_front": (
-        "The person in image 1, full body visible from head to toe, standing straight "
-        "facing the camera, arms relaxed by their sides, feet shoulder-width apart, on a "
-        "plain white background. Same face, hairstyle, skin tone and outfit unchanged."
-    ),
-    "03_left_profile": (
-        "The person in image 1, full body visible from head to toe, body turned to show "
-        "a side profile facing left, arms relaxed by their sides, on a plain white "
-        "background. Same face, hairstyle, skin tone and outfit unchanged."
-    ),
-    "04_right_profile": (
-        "The person in image 1, full body visible from head to toe, body turned to show "
-        "a side profile facing right, arms relaxed by their sides, on a plain white "
-        "background. Same face, hairstyle, skin tone and outfit unchanged."
-    ),
-    "05_back": (
-        "The person in image 1, full body visible from head to toe, viewed directly from "
-        "behind, standing straight, arms relaxed by their sides, on a plain white "
-        "background. Same hairstyle and outfit unchanged, back of the outfit clearly visible."
-    ),
-}
+def _view_prompt(pose_name):
+    view = VIEW_DEFINITIONS[pose_name]
+    if view["crop"]:
+        framing = view["crop"]
+    else:
+        framing = "the entire subject fully visible from one end to the other"
+    return (
+        f"The subject in image 1, {framing}, camera {view['camera']}, subject in a "
+        f"natural resting pose, on a plain white background. Same appearance, "
+        f"materials, colors and markings unchanged."
+    )
+
+
+POSE_PROMPTS = {name: _view_prompt(name) for name in POSE_NAMES}
 
 RMBG_KW = dict(
     model="RMBG-2.0", sensitivity=1.0, process_res=1024, mask_blur=0, mask_offset=0,
