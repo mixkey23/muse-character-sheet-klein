@@ -1,6 +1,6 @@
-# Muse Character Sheet — Klein
+# Man4Tech Character Sheet — Klein
 
-[FLUX.2 \[klein\]](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B) is Black Forest Labs' fast, step-distilled image generation/editing model. **Muse Character Sheet — Klein** is a single ComfyUI node that generates a full 5-pose character turnaround (portrait, front, left profile, right profile, back) from **one character reference photo** — no separate mannequin guide sheet required, poses are described directly in text.
+[FLUX.2 \[klein\]](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B) is Black Forest Labs' fast, step-distilled image generation/editing model. **Man4Tech Character Sheet — Klein** is a single ComfyUI node that generates a full 5-pose character turnaround (portrait, front, left profile, right profile, back) from **one character reference photo** — no separate mannequin guide sheet required, poses are described directly in text.
 
 Instead of wiring up five separate Klein generations by hand, the node runs all five internally and gives you **Confirm** / **New seed** / **Apply edit** buttons per pose in its own panel, plus an **Edit all poses** box to apply one instruction to every unconfirmed pose at once. Confirm is a pure local lock — it doesn't submit anything on its own. "New seed" on a pose with an active edit re-rolls *that edit*, not the original. A **seed_mode** widget (`random`/`fixed`) controls whether re-running the same photo after a completed sheet gives you a fresh random set or a reproducible one. Once every pose is confirmed, click **Build final sheet now** to assemble the final 4096x2304 sheet.
 
@@ -36,7 +36,7 @@ then restart ComfyUI and check its startup log for a clean `### Loading: <packag
 - **[ComfyUI-Impact-Pack](https://github.com/ltdrdata/ComfyUI-Impact-Pack)** + **[ComfyUI-Impact-Subpack](https://github.com/ltdrdata/ComfyUI-Impact-Subpack)** — only required if you enable the node's **Face Detail** pass (off by default).
 - **[Muse Model Loader](https://github.com/muse-collective-26/muse-model-loader)** — This is an optional node that is in the workflow.
 
-This repo also bundles **Muse Sheet: Align Figure Height** (`MuseSheetAlignFigure`), used internally to size/align every panel in the final sheet — no separate install needed.
+This repo also bundles **Man4Tech Sheet: Align Figure Height** (`Man4TechSheetAlignFigure`), used internally to size/align every panel in the final sheet — no separate install needed.
 
 ## ⚖️ Model licensing — read before picking a checkpoint
 

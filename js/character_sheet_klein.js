@@ -696,9 +696,9 @@ function buildCharacterSheetUI(node, stateWidget, faceWidgets) {
 }
 
 app.registerExtension({
-  name: "MuseCollective.CharacterSheetKlein",
+  name: "Man4Tech.CharacterSheetKlein",
   async beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== "MuseCharacterSheetKlein") return;
+    if (nodeData.name !== "Man4TechCharacterSheetKlein") return;
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
@@ -725,7 +725,7 @@ app.registerExtension({
         hideOnZoom: false,
       });
       domWidget.computeSize = (width) => [width, ui.measureHeight()];
-      this._museCharacterSheetKleinUI = ui;
+      this._man4techCharacterSheetKleinUI = ui;
 
       setTimeout(() => applyOverrideState(this), 0);
       return result;
@@ -741,7 +741,7 @@ app.registerExtension({
     const onExecuted = nodeType.prototype.onExecuted;
     nodeType.prototype.onExecuted = function (message) {
       const result = onExecuted?.apply(this, arguments);
-      this._museCharacterSheetKleinUI?.update(message);
+      this._man4techCharacterSheetKleinUI?.update(message);
       return result;
     };
 
@@ -754,7 +754,7 @@ app.registerExtension({
         state.action = null;
         setState(stateWidget, state);
       }
-      this._museCharacterSheetKleinUI?.restore();
+      this._man4techCharacterSheetKleinUI?.restore();
       setTimeout(() => applyOverrideState(this), 0);
       return result;
     };

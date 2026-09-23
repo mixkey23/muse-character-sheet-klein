@@ -5,7 +5,7 @@ local-only, never-published ComfyUI-Muse-Sheet-Alignment folder) so this repo
 is self-contained - no separate custom node install required to line up the
 final sheet's panels. The sibling Klein repo bundles an identical copy of
 this same file for the same reason; loading both packages registers
-"MuseSheetAlignFigure" twice (ComfyUI logs a harmless duplicate-registration
+"Man4TechSheetAlignFigure" twice (ComfyUI logs a harmless duplicate-registration
 warning, one copy just wins - the code is byte-identical either way).
 """
 import logging
@@ -13,7 +13,7 @@ import torch
 import torch.nn.functional as F
 
 
-class MuseSheetAlignFigure:
+class Man4TechSheetAlignFigure:
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {
@@ -27,7 +27,7 @@ class MuseSheetAlignFigure:
 
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "align"
-    CATEGORY = "Muse/Character Sheet"
+    CATEGORY = "Man4Tech/Character Sheet"
 
     def align(self, image, width, height, figure_height, bottom_margin, threshold=0.1, mask=None):
         if figure_height + bottom_margin > height:
@@ -65,11 +65,11 @@ class MuseSheetAlignFigure:
             top = height - bottom_margin - figure_height
             left = (width - scaled_width) // 2
             canvas[top:top+figure_height, left:left+scaled_width] = resized
-            logging.info("[Muse Sheet Alignment] bounds=%s -> figure=%sx%s canvas=%sx%s bottom=%s",
+            logging.info("[Man4Tech Sheet Alignment] bounds=%s -> figure=%sx%s canvas=%sx%s bottom=%s",
                          (x0,y0,x1,y1), scaled_width,figure_height,width,height,bottom_margin)
             result.append(canvas)
         return (torch.stack(result),)
 
 
-NODE_CLASS_MAPPINGS = {"MuseSheetAlignFigure": MuseSheetAlignFigure}
-NODE_DISPLAY_NAME_MAPPINGS = {"MuseSheetAlignFigure": "Muse Sheet: Align Figure Height"}
+NODE_CLASS_MAPPINGS = {"Man4TechSheetAlignFigure": Man4TechSheetAlignFigure}
+NODE_DISPLAY_NAME_MAPPINGS = {"Man4TechSheetAlignFigure": "Man4Tech Sheet: Align Figure Height"}

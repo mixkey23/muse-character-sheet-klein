@@ -1,4 +1,4 @@
-"""Muse Character Sheet (Klein).
+"""Man4Tech Character Sheet (Klein).
 
 Sibling of MuseCharacterSheetDirector (Muse-CharacterSheet-Director), same
 confirm/re-roll session-state architecture, but generates each pose with
@@ -208,7 +208,7 @@ def _node(name):
     cls = comfy_nodes.NODE_CLASS_MAPPINGS.get(name)
     if cls is None:
         raise RuntimeError(
-            f"[MuseCharacterSheetKlein] Required node '{name}' is not registered. "
+            f"[Man4TechCharacterSheetKlein] Required node '{name}' is not registered. "
             f"Check that its custom_nodes package is installed and loaded."
         )
     return cls()
@@ -276,13 +276,13 @@ def _get_models(unet_name, clip_name, vae_name, kv_cache, model_override=None, c
     if _MODEL_CACHE.get("key") == key:
         return _MODEL_CACHE
 
-    print(f"[MuseCharacterSheetKlein] loading models: {key}", flush=True)
+    print(f"[Man4TechCharacterSheetKlein] loading models: {key}", flush=True)
     model = model_override if model_override is not None else _node("UNETLoader").load_unet(unet_name, "default")[0]
     if use_kv:
         model = _node("FluxKVCache").execute(model=model)[0]
-        print("[MuseCharacterSheetKlein] KV-cache: ON", flush=True)
+        print("[Man4TechCharacterSheetKlein] KV-cache: ON", flush=True)
     else:
-        print("[MuseCharacterSheetKlein] KV-cache: OFF", flush=True)
+        print("[Man4TechCharacterSheetKlein] KV-cache: OFF", flush=True)
     clip = clip_override if clip_override is not None else _node("CLIPLoader").load_clip(clip_name, "flux2", "default")[0]
     vae = vae_override if vae_override is not None else _node("VAELoader").load_vae(vae_name)[0]
 
@@ -295,7 +295,7 @@ def _get_detector(detector_type):
     model_name = FACE_DETAIL_DETECTOR_MODELS[detector_type]
     if _DETECTOR_CACHE.get("key") == model_name:
         return _DETECTOR_CACHE
-    print(f"[MuseCharacterSheetKlein] loading detector: {model_name}", flush=True)
+    print(f"[Man4TechCharacterSheetKlein] loading detector: {model_name}", flush=True)
     bbox_detector, _segm_detector = _node("UltralyticsDetectorProvider").doit(model_name)
     _DETECTOR_CACHE.clear()
     _DETECTOR_CACHE.update({"key": model_name, "bbox_detector": bbox_detector})
@@ -344,7 +344,7 @@ def _face_detail(image, model, positive, negative, models, seed, cfg,
     onto the full image (SEGSPaste). However many "faces" the detector
     reports - 1 or 300 - exactly one refine pass ever runs."""
     detector = _get_detector(face_detail_type)
-    print(f"[MuseCharacterSheetKlein] >>> face-detail pass START (detect={face_detail_type}, "
+    print(f"[Man4TechCharacterSheetKlein] >>> face-detail pass START (detect={face_detail_type}, "
           f"sampler={face_detail_sampler}, scheduler={face_detail_scheduler}, "
           f"denoise={face_detail_denoise}, steps={FACE_DETAIL_STEPS})", flush=True)
     raw_segs = _node("BboxDetectorSEGS").doit(
@@ -355,7 +355,7 @@ def _face_detail(image, model, positive, negative, models, seed, cfg,
     )
     found = len(largest_seg[1]) > 0
     if not found:
-        print("[MuseCharacterSheetKlein] <<< face-detail pass END - NO region detected, image unchanged", flush=True)
+        print("[Man4TechCharacterSheetKlein] <<< face-detail pass END - NO region detected, image unchanged", flush=True)
         return image
     basic_pipe = _node("ToBasicPipe").doit(
         model=model, clip=models["clip"], vae=models["vae"], positive=positive, negative=negative,
@@ -367,7 +367,7 @@ def _face_detail(image, model, positive, negative, models, seed, cfg,
         **FACE_DETAIL_DETAILER_KW,
     )
     result_image = _node("SEGSPaste").doit(image=image, segs=refined_segs, **FACE_DETAIL_PASTE_KW)[0]
-    print("[MuseCharacterSheetKlein] <<< face-detail pass END - region found and refined", flush=True)
+    print("[Man4TechCharacterSheetKlein] <<< face-detail pass END - region found and refined", flush=True)
     return result_image
 
 
@@ -516,7 +516,7 @@ def _assemble_final(sess, output_scale=1.0):
         if i == 0:
             panel = _resize(pose["image"], *portrait_size)
         else:
-            panel = _node("MuseSheetAlignFigure").align(image=pose["image"], mask=pose["mask"], **align_kw)[0]
+            panel = _node("Man4TechSheetAlignFigure").align(image=pose["image"], mask=pose["mask"], **align_kw)[0]
         panels.append(panel)
     return torch.cat(panels, dim=2)
 
@@ -525,12 +525,12 @@ def _preview(image, persist=False):
     node = _node("SaveImage") if persist else _node("PreviewImage")
     kwargs = {"images": image}
     if persist:
-        kwargs["filename_prefix"] = "MuseCharacterSheetKlein"
+        kwargs["filename_prefix"] = "Man4TechCharacterSheetKlein"
     result = node.save_images(**kwargs)
     return result["ui"]["images"][0]
 
 
-class MuseCharacterSheetKlein:
+class Man4TechCharacterSheetKlein:
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -575,7 +575,7 @@ class MuseCharacterSheetKlein:
     RETURN_NAMES = ("character_sheet",)
     FUNCTION = "run"
     OUTPUT_NODE = True
-    CATEGORY = "Muse/Character Sheet"
+    CATEGORY = "Man4Tech/Character Sheet"
     DESCRIPTION = (
         "Generates a 5-pose FLUX.2 [klein] character sheet from a single character reference "
         "photo (no guide sheet required - poses are described directly in text). Optionally "
@@ -640,7 +640,7 @@ class MuseCharacterSheetKlein:
                     if idx == 0:
                         pose_for_gen = pose_crop
                     else:
-                        pose_for_gen = _node("MuseSheetAlignFigure").align(image=pose_crop, mask=None, **ALIGN_POSE_REF_KW)[0]
+                        pose_for_gen = _node("Man4TechSheetAlignFigure").align(image=pose_crop, mask=None, **ALIGN_POSE_REF_KW)[0]
                     sess["pose_latents"][idx] = _node("VAEEncode").encode(vae=models["vae"], pixels=pose_for_gen)[0]
             else:
                 sess["pose_latents"] = {idx: None for idx in range(5)}
@@ -728,7 +728,7 @@ class MuseCharacterSheetKlein:
                 base_image = pose["image"]
                 combined_instruction = instruction
             pose_name = POSE_NAMES[i]
-            print(f"[MuseCharacterSheetKlein] editing {pose_name}: {combined_instruction}", flush=True)
+            print(f"[Man4TechCharacterSheetKlein] editing {pose_name}: {combined_instruction}", flush=True)
             run_edit(i, base_image, combined_instruction)
             return True
 
@@ -755,7 +755,7 @@ class MuseCharacterSheetKlein:
                 return False
             seeds[i] = int(new_seed)
             pose_name = POSE_NAMES[i]
-            print(f"[MuseCharacterSheetKlein] re-rolling edit on {pose_name}: {instruction} (seed={seeds[i]})", flush=True)
+            print(f"[Man4TechCharacterSheetKlein] re-rolling edit on {pose_name}: {instruction} (seed={seeds[i]})", flush=True)
             run_edit(i, source_image, instruction)
             return True
 
@@ -823,7 +823,7 @@ class MuseCharacterSheetKlein:
                            or sess["poses"][i]["prompt"] != prompts[i]
                        )]
         for i in to_generate:
-            print(f"[MuseCharacterSheetKlein] generating {POSE_NAMES[i]} (seed={seeds[i]})", flush=True)
+            print(f"[Man4TechCharacterSheetKlein] generating {POSE_NAMES[i]} (seed={seeds[i]})", flush=True)
             image, mask = _generate_pose(i, character_image, sess["char_latent"], sess["pose_latents"][i], models,
                                           seeds[i], prompts[i], steps, cfg,
                                           face_detail, face_detail_type, face_detail_sampler,
@@ -837,7 +837,7 @@ class MuseCharacterSheetKlein:
             if not all(confirmed):
                 status = "not_all_confirmed"
             else:
-                print("[MuseCharacterSheetKlein] assembling final sheet", flush=True)
+                print("[Man4TechCharacterSheetKlein] assembling final sheet", flush=True)
                 final_image = _assemble_final(sess, OUTPUT_SIZE_PRESETS.get(output_size, 1.0))
                 status = "finalized"
         else:
@@ -873,5 +873,5 @@ class MuseCharacterSheetKlein:
         return {"ui": ui, "result": result}
 
 
-NODE_CLASS_MAPPINGS = {"MuseCharacterSheetKlein": MuseCharacterSheetKlein}
-NODE_DISPLAY_NAME_MAPPINGS = {"MuseCharacterSheetKlein": "Muse Character Sheet (Klein)"}
+NODE_CLASS_MAPPINGS = {"Man4TechCharacterSheetKlein": Man4TechCharacterSheetKlein}
+NODE_DISPLAY_NAME_MAPPINGS = {"Man4TechCharacterSheetKlein": "Man4Tech Character Sheet (Klein)"}
