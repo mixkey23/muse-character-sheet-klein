@@ -61,6 +61,28 @@ TARGET_SIZE = {
 ALIGN_BODY_KW = dict(width=704, height=2304, figure_height=2048, bottom_margin=128, threshold=0.1)
 PORTRAIT_FINAL_SIZE = (1280, 2304)  # (width, height)
 
+# [2026-09-24] Per-figure_type overrides for ALIGN_BODY_KW's figure_height/
+# bottom_margin ONLY - width/height/threshold stay identical across types.
+# MuseSheetAlignFigure (sheet_align.py, untouched) already normalizes off
+# the REAL bbox of the RMBG mask, not an anatomy assumption - the only
+# figure-agnostic gap was these two fixed numbers, tuned for a human
+# standing tall with feet near the bottom margin. Absent from this dict ==
+# identical to today's behavior (human/humanoid/animal/creature/robot/
+# object/custom all fall back to ALIGN_BODY_KW's own defaults via .get()).
+FIGURE_TYPE_ALIGN_OVERRIDES = {
+    "quadruped": dict(figure_height=1536, bottom_margin=384),
+    "floating": dict(figure_height=1792, bottom_margin=256),
+}
+
+
+def _align_kw_for(figure_type, scale):
+    base = {**ALIGN_BODY_KW, **FIGURE_TYPE_ALIGN_OVERRIDES.get(figure_type, {})}
+    return {**base,
+            "width": round(base["width"] * scale),
+            "height": round(base["height"] * scale),
+            "figure_height": round(base["figure_height"] * scale),
+            "bottom_margin": round(base["bottom_margin"] * scale)}
+
 # [2026-09-17] pose_reference_image crop rects - identical to the Krea2
 # sibling node's own GUIDE_CROPS (same mannequin template layout, verified
 # against Codex's original manual "KREA 2 Character Sheet - Pose Guides"
@@ -128,33 +150,73 @@ VIEW_DEFINITIONS = {
     "05_back": {"camera": "directly behind the subject, opposite the front", "crop": None},
 }
 
-# [2026-09-23] FS-004: rebuilt from VIEW_DEFINITIONS - "the subject in image
-# 1" (not "the person") anchors identity to the one reference without
-# assuming a body plan; "natural resting pose" replaces "arms relaxed by
-# their sides" (a biped-only description); "full body" / "entire body" reads
-# fine for a quadruped, a floating figure or a robot without singling out
-# limbs, faces or hair. Proven-in-testing framing (plain white background,
-# full body head-to-toe/end-to-end, unchanged appearance) is unchanged -
-# only the anatomy-specific wording is gone.
+# [2026-09-24] Per-figure_type "presentation" clause - the one piece of
+# POSE_PROMPTS that genuinely differs by body plan (a quadruped can't have a
+# "standing presentation" the same way a biped does). Deliberately just a
+# short clause, not a full per-type anatomy vocabulary - the rest of the
+# prompt (camera relationship, "unchanged identity/coloring/markings") stays
+# identical across every type. "custom" is intentionally absent here - it
+# has no preset, see _build_pose_prompts/_is_unedited_default below.
+FIGURE_TYPE_PRESENTATION = {
+    "human": "neutral standing presentation",
+    "humanoid": "neutral standing presentation",
+    "quadruped": "neutral four-legged standing presentation",
+    "animal": "neutral natural resting presentation",
+    "creature": "neutral natural resting presentation",
+    "robot": "neutral standing presentation",
+    "object": "neutral resting presentation",
+    "floating": "neutral suspended presentation",
+}
+FIGURE_TYPE_CHOICES = list(FIGURE_TYPE_PRESENTATION) + ["custom"]
+
+# [2026-09-24] FS-004 (audit fix): "The subject" -> "The character" per the
+# audit's explicit ask; framing/closing clauses reworded closer to the
+# audit's own suggested direction ("Same identity, coloring, markings, and
+# outfit/materials unchanged"). Still camera-relationship-only, still no
+# anatomy words (no "arms", "shoulders", "feet", "face/hairstyle/skin tone").
+# [2026-09-23] FS-005: rebuilt from VIEW_DEFINITIONS - "the character in
+# image 1" anchors identity to the one reference without assuming a body
+# plan; "full body visible" reads fine for a quadruped, a floating figure or
+# a robot without singling out limbs, faces or hair.
 # [2026-09-19] Single-reference, text-described poses - proven in real testing
 # against this exact workflow (Flux Klein 1 Image Ref.json). Everything is a
 # concrete, generic pose description with no image-specific detail, so the
 # same prompt works for any character photo dropped in - see Andy's explicit
 # requirement that this NOT be hardcoded to one specific photo's content.
-def _view_prompt(pose_name):
+def _view_prompt(pose_name, presentation):
     view = VIEW_DEFINITIONS[pose_name]
     if view["crop"]:
         framing = view["crop"]
     else:
-        framing = "the entire subject fully visible from one end to the other"
+        framing = "full body visible"
     return (
-        f"The subject in image 1, {framing}, camera {view['camera']}, subject in a "
-        f"natural resting pose, on a plain white background. Same appearance, "
-        f"materials, colors and markings unchanged."
+        f"The character in image 1, {framing}, camera {view['camera']}, "
+        f"{presentation}, on a plain white background. Same identity, coloring, "
+        f"markings, and outfit/materials unchanged."
     )
 
 
-POSE_PROMPTS = {name: _view_prompt(name) for name in POSE_NAMES}
+def _build_pose_prompts(figure_type):
+    """Returns the {pose_name: prompt} preset for one figure_type. Unknown
+    values (including "custom", which has no preset by design) fall back to
+    "human" - safe because this is only ever used to produce a CONCRETE
+    default text, never to silently guess what "custom" should mean."""
+    presentation = FIGURE_TYPE_PRESENTATION.get(figure_type, FIGURE_TYPE_PRESENTATION["human"])
+    return {name: _view_prompt(name, presentation) for name in POSE_NAMES}
+
+
+# [2026-09-24] One preset per real figure_type, computed once - used both as
+# the base for _build_pose_prompts() and to detect "this pose's prompt is
+# still exactly some preset's default text, not hand-edited" (see
+# _is_unedited_default). "custom" has no entry here on purpose.
+_FIGURE_TYPE_PROMPT_PRESETS = {ft: _build_pose_prompts(ft) for ft in FIGURE_TYPE_PRESENTATION}
+
+
+def _is_unedited_default(pose_name, text):
+    return any(text == presets[pose_name] for presets in _FIGURE_TYPE_PROMPT_PRESETS.values())
+
+
+POSE_PROMPTS = _FIGURE_TYPE_PROMPT_PRESETS["human"]
 
 RMBG_KW = dict(
     model="RMBG-2.0", sensitivity=1.0, process_res=1024, mask_blur=0, mask_offset=0,
@@ -496,20 +558,19 @@ def _restore_confirmed_preview(state, index, seed, prompt):
     return {"seed": seed, "prompt": prompt, "image": pixels, "mask": mask}
 
 
-def _assemble_final(sess, output_scale=1.0):
+def _assemble_final(sess, figure_type, output_scale=1.0):
     """[2026-09-17] output_scale (default 1.0 = the original 4096x2304)
     uniformly scales every panel's dimensions - portrait width/height and the
     body panels' width/height/figure_height/bottom_margin all move together,
     so proportions stay identical to the tuned defaults; only the overall
     size changes. Requested via a YouTube comment asking for a configurable
-    final resolution."""
+    final resolution.
+    [2026-09-24] figure_type only swaps in FIGURE_TYPE_ALIGN_OVERRIDES'
+    figure_height/bottom_margin before scaling (see _align_kw_for) - every
+    other dimension, and MuseSheetAlignFigure itself, is unchanged."""
     scale = float(output_scale)
     portrait_size = (round(PORTRAIT_FINAL_SIZE[0] * scale), round(PORTRAIT_FINAL_SIZE[1] * scale))
-    align_kw = {**ALIGN_BODY_KW,
-                "width": round(ALIGN_BODY_KW["width"] * scale),
-                "height": round(ALIGN_BODY_KW["height"] * scale),
-                "figure_height": round(ALIGN_BODY_KW["figure_height"] * scale),
-                "bottom_margin": round(ALIGN_BODY_KW["bottom_margin"] * scale)}
+    align_kw = _align_kw_for(figure_type, scale)
     panels = []
     for i in range(5):
         pose = sess["poses"][i]
@@ -558,6 +619,18 @@ class Man4TechCharacterSheetKlein:
                 # which then cascaded and scrambled unet_name/clip_name too).
                 # New widgets always go at the true end from now on.
                 "output_size": (list(OUTPUT_SIZE_PRESETS.keys()), {"default": "4096x2304 (Standard - default)", "tooltip": "Final assembled sheet size - pick the exact pixel dimensions you want. Every panel's proportions stay identical across presets, only the overall size changes. Only affects the final Build step, not the per-pose generation/preview resolution."}),
+                # [2026-09-24] Appended AFTER output_size, same true-end rule
+                # as output_size's own comment above - never insert mid-list.
+                # Default "human" is deliberately the old, only-ever-tested
+                # behavior - a workflow that never touches this widget
+                # generates identical prompts to before this was added.
+                # Picking anything else only changes each pose's
+                # "presentation" clause (see FIGURE_TYPE_PRESENTATION) and,
+                # for quadruped/floating, the final-assembly figure_height/
+                # bottom_margin (see FIGURE_TYPE_ALIGN_OVERRIDES) - it only
+                # applies to a prompt that's still unedited default text, so
+                # it never clobbers a prompt you've hand-edited in the UI.
+                "figure_type": (FIGURE_TYPE_CHOICES, {"default": "human", "tooltip": "What kind of figure the reference photo shows. Only changes each pose's neutral 'presentation' clause (e.g. 'four-legged' for quadruped) and, for quadruped/floating, the final sheet's alignment - never overwrites a prompt you've hand-edited. 'custom' disables the automatic default text entirely; write your own per-pose prompts in the node's UI."}),
             },
             # Same purely-additive override pattern as the Krea2 node - manual
             # unet_name/clip_name/vae_name widgets still work standalone; a
@@ -587,7 +660,7 @@ class Man4TechCharacterSheetKlein:
 
     def run(self, character_image, unet_name, clip_name, vae_name, kv_cache, steps, cfg,
             face_detail, face_detail_type, face_detail_sampler, face_detail_scheduler, face_detail_denoise,
-            seed_mode, output_size, state_json, unique_id, pose_reference_image=None, model_override=None, clip_override=None, vae_override=None):
+            seed_mode, output_size, figure_type, state_json, unique_id, pose_reference_image=None, model_override=None, clip_override=None, vae_override=None):
         character_image = _ensure_rgb(character_image)
         if pose_reference_image is not None:
             pose_reference_image = _ensure_rgb(pose_reference_image)
@@ -600,6 +673,18 @@ class Man4TechCharacterSheetKlein:
         prompts = list(state.get("prompts") or DEFAULT_PROMPTS)
         if len(prompts) != 5:
             prompts = list(DEFAULT_PROMPTS)
+        # [2026-09-24] Keep any UNEDITED preset prompt in sync with the
+        # currently selected figure_type - e.g. switching human -> quadruped
+        # updates the still-default prompts to the quadruped presentation
+        # clause without a manual "Reset prompt" click per pose. A prompt
+        # that no longer matches ANY preset's text (hand-edited in the UI,
+        # or already carrying an edit_instruction) is left untouched.
+        # "custom" opts out entirely - no preset exists to resync toward.
+        if figure_type != "custom":
+            figure_defaults = _build_pose_prompts(figure_type)
+            for i, pose_name in enumerate(POSE_NAMES):
+                if not confirmed[i] and _is_unedited_default(pose_name, prompts[i]):
+                    prompts[i] = figure_defaults[pose_name]
         action = state.get("action")
 
         sig = _signature(character_image, pose_reference_image, unet_name, clip_name, vae_name, kv_cache, steps, cfg,
@@ -798,7 +883,7 @@ class Man4TechCharacterSheetKlein:
             # this up on its own, no special regeneration path needed.
             i = int(action["pose"])
             if not confirmed[i]:
-                prompts[i] = DEFAULT_PROMPTS[i]
+                prompts[i] = _build_pose_prompts(figure_type)[POSE_NAMES[i]]
         elif not action and seed_mode == "random":
             # [2026-09-23] A bare "hit Run" (no button clicked - action is
             # None) used to just replay whatever was already cached, since
@@ -838,7 +923,7 @@ class Man4TechCharacterSheetKlein:
                 status = "not_all_confirmed"
             else:
                 print("[Man4TechCharacterSheetKlein] assembling final sheet", flush=True)
-                final_image = _assemble_final(sess, OUTPUT_SIZE_PRESETS.get(output_size, 1.0))
+                final_image = _assemble_final(sess, figure_type, OUTPUT_SIZE_PRESETS.get(output_size, 1.0))
                 status = "finalized"
         else:
             status = "generating" if to_generate else "ready"
